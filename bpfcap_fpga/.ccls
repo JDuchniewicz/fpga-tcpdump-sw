@@ -1,0 +1,3 @@
+clang
+-I/mnt/games/Projects/KTH/Thesis/atlas_linux_ghrd-stable/software/linux-socfpga/include
+-I/mnt/games/Projects/Linux/linux-socfpga/include
