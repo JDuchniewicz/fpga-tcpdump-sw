@@ -4,6 +4,8 @@
 #include <linux/of.h>
 #include <linux/fs.h>
 #include <linux/io.h>
+#include <linux/types.h>
+#include <linux/uaccess.h>
 
 #define BPFCAP_FPGA_CTRL        0x00 /* Read / Write */
 #define BPFCAP_FPGA_PKT_BEGIN   0x04 /* Write */
@@ -13,6 +15,8 @@ static int bpfcap_fpga_probe(struct platform_device *pdev);
 static int bpfcap_fpga_remove(struct platform_device *pdev);
 static ssize_t bpfcap_fpga_write(struct file *file, const char *buffer, size_t len, loff_t *offset);
 static ssize_t bpfcap_fpga_read(struct file *file, char *buffer, size_t len, loff_t *offset);
+static int bpfcap_fpga_init(void);
+static void bpfcap_fpga_exit(void);
 
 struct bpfcap_fpga_dev {
     struct miscdevice miscdev;
@@ -95,7 +99,14 @@ bad_exit_return:
 
 static int bpfcap_fpga_remove(struct platform_device *pdev)
 {
+    struct bpfcap_fpga_dev *dev = (struct bpfcap_fpga_dev*)platform_get_drvdata(pdev);
+    pr_info("bpfcap_fpga_remove enter\n");
 
+    // write stop to the capture program? TODO:
+
+    misc_deregister(&dev->miscdev);
+    pr_info("bpfcap_fpga_remove exit\n");
+    return 0;
 }
 
 static ssize_t bpfcap_fpga_write(struct file *file, const char *buffer, size_t len, loff_t *offset)
@@ -108,3 +119,20 @@ static ssize_t bpfcap_fpga_read(struct file *file, char *buffer, size_t len, lof
 
 }
 
+static int bpfcap_fpga_init(void)
+{
+
+}
+
+static void bpfcap_fpga_exit(void)
+{
+
+}
+
+module_init(bpfcap_fpga_init);
+module_exit(bpfcap_fpga_exit);
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Jakub Duchniewicz, j.duchniewicz@gmail.com");
+MODULE_DESCRIPTION("FPGA accelerated tcpdump with eBPF driver.");
+MODULE_VERSION("1.0");
