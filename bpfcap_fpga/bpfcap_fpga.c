@@ -10,10 +10,13 @@
 
 // TODO: need a define for the physical emory address we will have assigned
 //
-#define BPFCAP_FPGA_MEM_START   0x1000000 // FIXME: add proper address?
+#define BPFCAP_FPGA_REG_START   0x000010000 // FIXME:  is this proper address?
 #define BPFCAP_FPGA_CTRL        0x00 /* Read / Write */
 #define BPFCAP_FPGA_PKT_BEGIN   0x04 /* Write */
 #define BPFCAP_FPGA_PKT_END     0x08 /* Write */
+#define BPFCAP_FPGA_WRITE_ADDR  0x0C /* Write */
+/* end of physical memory range */
+#define BPFCAP_FPGA_REG_END     BPFCAP_FPGA_REG_START + BPFCAP_FPGA_WRITE_ADDR
 
 static int bpfcap_fpga_probe(struct platform_device *pdev);
 static int bpfcap_fpga_remove(struct platform_device *pdev);
@@ -81,6 +84,7 @@ static int bpfcap_fpga_probe(struct platform_device *pdev)
     iowrite32(dev->write_value, dev->regs + BPFCAP_FPGA_CTRL);
     iowrite32(dev->write_value, dev->regs + BPFCAP_FPGA_PKT_BEGIN);
     iowrite32(dev->write_value, dev->regs + BPFCAP_FPGA_PKT_END);
+    iowrite32(dev->write_value, dev->regs + BPFCAP_FPGA_WRITE_ADDR);
 
     dev->miscdev.minor = MISC_DYNAMIC_MINOR;
     dev->miscdev.name = "bpfcap_fpga";
@@ -136,12 +140,13 @@ static ssize_t bpfcap_fpga_read(struct file *file, char *buffer, size_t len, lof
     return 1;
 }
 
+// will it expose proper registers? probably yes, avalon will expose the addressing range TODO:
 static int bpfcap_fpga_mmap(struct file *file, struct vm_area_struct *vma)
 {
     unsigned long off = vma->vm_pgoff << PAGE_SHIFT;
-    unsigned long physical = BPFCAP_FPGA_MEM_START + off;
+    unsigned long physical = BPFCAP_FPGA_REG_START + off;
     unsigned long vsize = vma->vm_end - vma->vm_start;
-    unsigned long psize = BPFCAP_FPGA_CTRL - off;
+    unsigned long psize = BPFCAP_FPGA_REG_END - off;
 
     if (vsize > psize)
         return -EINVAL; // too high
