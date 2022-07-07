@@ -10,7 +10,7 @@
 
 // TODO: need a define for the physical emory address we will have assigned
 //
-#define BPFCAP_FPGA_REG_START   0x000010000 // FIXME:  is this proper address?
+#define BPFCAP_FPGA_REG_START   0xc0010000 // FIXME:  is this proper address?
 #define BPFCAP_FPGA_CTRL        0x00 /* Read / Write */
 #define BPFCAP_FPGA_PKT_BEGIN   0x04 /* Write */
 #define BPFCAP_FPGA_PKT_END     0x08 /* Write */
@@ -82,7 +82,9 @@ static int bpfcap_fpga_probe(struct platform_device *pdev)
 
     dev->write_value = 0x0;
     iowrite32(dev->write_value, dev->regs + BPFCAP_FPGA_CTRL);
+    //dev->write_value = 0xdeadbeef;
     iowrite32(dev->write_value, dev->regs + BPFCAP_FPGA_PKT_BEGIN);
+    //dev->write_value = 0x0000ffff;
     iowrite32(dev->write_value, dev->regs + BPFCAP_FPGA_PKT_END);
     iowrite32(dev->write_value, dev->regs + BPFCAP_FPGA_WRITE_ADDR);
 
@@ -144,16 +146,19 @@ static ssize_t bpfcap_fpga_read(struct file *file, char *buffer, size_t len, lof
 static int bpfcap_fpga_mmap(struct file *file, struct vm_area_struct *vma)
 {
     unsigned long off = vma->vm_pgoff << PAGE_SHIFT;
-    unsigned long physical = BPFCAP_FPGA_REG_START + off;
+    unsigned long physical = BPFCAP_FPGA_REG_START + off; // TODO: should it be remapped using this address or the bridge one?
     unsigned long vsize = vma->vm_end - vma->vm_start;
-    unsigned long psize = BPFCAP_FPGA_REG_END - off;
+    unsigned long psize = 0x10; // FIXME:
+    pr_info("bpfcap_fpga_mmap off: %lx, physical: %lx, vsize: %lx, psize: %lx\n",
+            off, physical, vsize, psize);
 
-    if (vsize > psize)
-        return -EINVAL; // too high
+    //if (vsize > psize)
+    //    return -EINVAL; // too high
 
-    if (remap_pfn_range(vma, vma->vm_start, physical, vsize, vma->vm_page_prot))
+    if (remap_pfn_range(vma, vma->vm_start, physical, psize, vma->vm_page_prot))
         return -EAGAIN;
 
+    pr_info("bpfcap_fpga_mmap exit\n");
     return 0;
 }
 
