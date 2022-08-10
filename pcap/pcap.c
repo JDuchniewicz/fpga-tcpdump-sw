@@ -13,14 +13,12 @@
 #define MEM_BUFFER_PHY_ADDR         0x3fff0000
 #define MEM_BUFFER_LEN              0xffff
 #define MEM_BUFFER_PKT_SRC_OFF      0x0
-#define MEM_BUFFER_PKT_DST_OFF(i)  (0x1110 * (i))
-#define TEMP_BUFFER_SIZE            256
-// where we put the packet for reading? probably at the beginning, then we write with consecutive offsets that we can check in memory
-// manually
 
 #define BPFCAP_FPGA_REG_SIZE        0x10 // TODO: how can we get it from the driver?
 #define BPFCAP_DEV_FILE             "/dev/bpfcap_fpga"
 #define MEM_FILE                    "/dev/mem"
+
+#define PCAP_HEADER_SIZE            24 // in bytes
 
 static volatile sig_atomic_t stop = 0;
 
@@ -69,17 +67,15 @@ void print_memory(char* mem, uint32_t start_addr, uint32_t end_addr)
     }
 }
 
+void write_pcap_header
+
+//void print_help()
+//{
+//    print
+//}
+
 int main(int argc, char *agv[])
 {
-    //int bpfcap_fpga_fd = open(BPFCAP_DEV_FILE, O_RDWR | O_SYNC);
-    //if (bpfcap_fpga_fd < 0)
-    //{
-    //    fatal("Cannot open the bpfcap_fpga_fd device", errno);
-    //    goto fail;
-    //}
-    //
-    printf("sizeof uint32_t* %lu, sizeof void* %lu\n", sizeof(uint32_t*), sizeof(void*));
-
     int mem_fd = open(MEM_FILE, O_RDWR | O_SYNC);
     if (mem_fd < 0)
     {
@@ -87,35 +83,67 @@ int main(int argc, char *agv[])
         goto fail;
     }
 
-    //uint32_t* bpfcap_fpga_regs = mmap(NULL, BPFCAP_FPGA_REG_SIZE, PROT_WRITE | PROT_READ, MAP_SHARED, bpfcap_fpga_fd, 0); // TODO: this needs to be int?
-    uint32_t* bpfcap_fpga_regs = mmap(NULL, BPFCAP_FPGA_REG_SIZE, PROT_WRITE | PROT_READ, MAP_SHARED, mem_fd, HPS_TO_FPGA_BASE_ADDR); // TODO: this does work, addresses the proper avalon addresses, however hangs signaltap sometimes (even regular debugging)
+    uint32_t* bpfcap_fpga_regs = mmap(NULL, BPFCAP_FPGA_REG_SIZE, PROT_WRITE | PROT_READ, MAP_SHARED, mem_fd, HPS_TO_FPGA_BASE_ADDR);
     if (bpfcap_fpga_regs == MAP_FAILED)
     {
         fatal("Cannot mmap the bpfcap_fpga_regs", errno);
-        goto fail;
+        goto fail_unmap;
     }
-
-    //bpfcap_fpga_regs = bpfcap_fpga_regs + 0x10000;
 
     char* packet_dump_mem = mmap(NULL, MEM_BUFFER_LEN, PROT_WRITE | PROT_READ, MAP_SHARED, mem_fd, MEM_BUFFER_PHY_ADDR);
     if (packet_dump_mem == MAP_FAILED)
     {
         fatal("Cannot mmap the reserved_memory_range", errno);
-        goto fail;
+        goto fail_unmap;
     }
 
     signal(SIGINT, sighandler);
     signal(SIGSTOP, sighandler);
 
-    // first open the device and mmap the memory for writing to registers
-    // Every time we want to capture a packet we need to write to mmaped memory and submit the writing memory addr
-    // probably even no need to wait (we will initally write just a single packet several times (maybe later allowing for loading
-    // the packets from memory)
-    print_fpga_regs(bpfcap_fpga_regs);
-    printf("\n\nMEMORY BEFORE PKT WRITING addr: %x end: %x\n\n", MEM_BUFFER_PHY_ADDR,
-            MEM_BUFFER_PHY_ADDR + TEMP_BUFFER_SIZE);
-    print_memory(packet_dump_mem, MEM_BUFFER_PHY_ADDR,
-            MEM_BUFFER_PHY_ADDR + TEMP_BUFFER_SIZE);
+    // this program needs:
+    // input management (filename, buffer capture size, constant wraparound buffer run?)
+    // open and dump the memory contents (byte by byte or memcpy?)
+    // add pcap header to the dump
+    // debug printing?
+    // checking if fpga is still working?
+
+    // for now just read whole memory to the buffer
+    int pcap_fd = open("dump.pcap", O_RDWR | O_CREAT, PROT_WRITE | PROT_READ);
+    if (pcap_fd < 0)
+    {
+        fatal("Cannot open the dump file", errno);
+        goto fail_pcap;
+    }
+
+    // wait until FPGA is not BUSY anymore and is DONE
+    uint32_t fpga_ctrl = (uint32_t)*bpfcap_fpga_regs;
+    if (fpga_ctrl & (0x1 << 31))
+    {
+        fatal("FPGA still busy! Exiting");
+        goto fail_pcap;
+    }
+
+    // get last write address and last len - this will be the end we need to dump
+    uint32_t out_buffer_pos = *(bpfcap_fpga_regs + 0xC);
+    uint32_t last_tx_len = *(bpfcap_fpga_regs + 0x8) - *(bpfcap_fpga_regs + 0x4);
+    out_buffer_pos += last_tx_len;
+
+    if (out_buffer_pos < MEM_BUFFER_PHY_ADDR || out_buffer_pos >=  0x3fffffff)
+    {
+        fatal("The output buffer either wrapped or is wrong, out_buffer_pos: ", out_buffer_pos);
+        goto fail;
+    }
+
+    uint32_t filesize = out_buffer_pos - MEM_BUFFER_PHY_ADDR;
+    char* pcap_buf = mmap(NULL, filesize + PCAP_HEADER_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, pcap_fd, 0);
+    if (pcap_buf == MAP_FAILED)
+    {
+        fatal("Canot map the dump buffer for writing", errno);
+        goto fail_pcap;
+    }
+    write_pcap_header(pcap_buf);
+
+    memcpy(pcap_buf, packet_dump_mem, filesize);
 /*
     // randomize the memory in the buffer? so we can check continously
     memset(packet_dump_mem, 0xFF, MEM_BUFFER_LEN);
@@ -156,49 +184,22 @@ int main(int argc, char *agv[])
     print_memory(packet_dump_mem, MEM_BUFFER_PHY_ADDR + MEM_BUFFER_PKT_DST_OFF(2),
             MEM_BUFFER_PHY_ADDR + MEM_BUFFER_PKT_DST_OFF(2) + TEMP_BUFFER_SIZE);
 
-
-    // loop 15 times
-    for (int i = 1; i < 3; ++i) // TODO: how many packets process?
-    {
-        if (stop) {
-            printf("Received a signal!\n");
-            goto fail;
-        }
-        // set write addr
-        printf("Looping i: %d!\n", i);
-        printf("\n\nMEMORY BEFORE FPGA PROCESSING\n\n");
-        print_memory(packet_dump_mem, MEM_BUFFER_PHY_ADDR + MEM_BUFFER_PKT_DST_OFF(i),
-                MEM_BUFFER_PHY_ADDR + MEM_BUFFER_PKT_DST_OFF(i) + TEMP_BUFFER_SIZE);
-
-        // always read the 0th location in memory (the dummy packet location)
-        set_fpga_regs(bpfcap_fpga_regs, 0x0, MEM_BUFFER_PHY_ADDR,
-                MEM_BUFFER_PHY_ADDR + TEMP_BUFFER_SIZE,
-                MEM_BUFFER_PHY_ADDR + MEM_BUFFER_PKT_DST_OFF(i));
-
-        sleep(1); // necessary because otherwise FPGA modifies the memory too soon?
-
-        print_fpga_regs(bpfcap_fpga_regs);
-
-        printf("\n\nMEMORY AFTER FPGA PROCESSING\n\n");
-        print_memory(packet_dump_mem, MEM_BUFFER_PHY_ADDR + MEM_BUFFER_PKT_DST_OFF(i),
-                MEM_BUFFER_PHY_ADDR + MEM_BUFFER_PKT_DST_OFF(i) + TEMP_BUFFER_SIZE);
-    }
     */
-
-    // print the mapped memory contents
-    printf("\n\nDONE PROCESSING\n\n");
 
     munmap(bpfcap_fpga_regs, BPFCAP_FPGA_REG_SIZE);
     munmap(packet_dump_mem, MEM_BUFFER_LEN);
-    //close(bpfcap_fpga_fd);
+    munmap(pcap_buf, filesize + PCAP_HEADER_SIZE);
     close(mem_fd);
+    close(pcap_fd);
     return 0;
 
+fail_pcap:
+    munmap(pcap_buf, filesize + PCAP_HEADER_SIZE);
+    close(pcap_fd);
 fail_unmap:
     munmap(bpfcap_fpga_regs, BPFCAP_FPGA_REG_SIZE);
     munmap(packet_dump_mem, MEM_BUFFER_LEN);
 fail:
-    //close(bpfcap_fpga_fd);
     close(mem_fd);
     exit(EXIT_FAILURE);
 }
