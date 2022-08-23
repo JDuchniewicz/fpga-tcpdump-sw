@@ -72,21 +72,35 @@ void print_memory(char* mem, uint32_t start_addr, uint32_t end_addr)
 void write_pcap_header(char* pcap_buf)
 {
     // magic
-    memcpy(pcap_buf, magic_nr, 4);
-    pcap_buf += 4;
+    // memcpy(pcap_buf, magic_nr, 4); TODO: somehow this does not work
+    *pcap_buf = 0xA1;
+    pcap_buf += 1;
+    *pcap_buf = 0xB2;
+    pcap_buf += 1;
+    *pcap_buf = 0x3C;
+    pcap_buf += 1;
+    *pcap_buf = 0x4D;
+    pcap_buf += 1;
+    printf("contents 0x%08x\n", *pcap_buf);
+    //pcap_buf += 4;
     // major
     *pcap_buf = 2;
+    printf("contents 0x%08x\n", *pcap_buf);
     pcap_buf += 2;
     // minor
     *pcap_buf = 4;
+    printf("contents 0x%08x\n", *pcap_buf);
     pcap_buf += 2;
     // reserved x2
     memset(pcap_buf, 0, 8);
+    printf("contents 0x%08x\n", *pcap_buf);
     pcap_buf += 8;
     // snaplen - 1500 currently used MTU?
     *pcap_buf = 0x05;
+    printf("contents 0x%08x\n", *pcap_buf);
     pcap_buf += 1;
     *pcap_buf = 0xdc;
+    printf("contents 0x%08x\n", *pcap_buf);
     pcap_buf += 3;
     // FCS + reserved
     pcap_buf += 2;
@@ -169,7 +183,10 @@ int main(int argc, char *agv[])
         goto fail_pcap;
     }
     ftruncate(pcap_fd, filesize + PCAP_HEADER_SIZE);
+    printf("pcap_buf: 0x%08x\n", (uint32_t)pcap_buf);
     write_pcap_header(pcap_buf);
+    pcap_buf += 24;
+    printf("pcap_buf: 0x%08x\n", (uint32_t)pcap_buf);
 
     memcpy(pcap_buf, packet_dump_mem, filesize);
 
