@@ -22,6 +22,8 @@
 
 static volatile sig_atomic_t stop = 0;
 
+static char* magic_nr = "0xA1B23C4D";
+
 static void fatal(const char* msg, ...)
 {
     va_list ap;
@@ -67,7 +69,31 @@ void print_memory(char* mem, uint32_t start_addr, uint32_t end_addr)
     }
 }
 
-void write_pcap_header
+void write_pcap_header(char* pcap_buf)
+{
+    // magic
+    memcpy(pcap_buf, magic_nr, 4);
+    pcap_buf += 4;
+    // major
+    *pcap_buf = 2;
+    pcap_buf += 2;
+    // minor
+    *pcap_buf = 4;
+    pcap_buf += 2;
+    // reserved x2
+    memset(pcap_buf, 0, 8);
+    pcap_buf += 8;
+    // snaplen - 1500 currently used MTU?
+    *pcap_buf = 0x05;
+    pcap_buf += 1;
+    *pcap_buf = 0xdc;
+    pcap_buf += 3;
+    // FCS + reserved
+    pcap_buf += 2;
+    // link type LINKTYPE_IPV4?
+    *pcap_buf = 0xe4;
+    pcap_buf += 2;
+}
 
 //void print_help()
 //{
@@ -116,75 +142,36 @@ int main(int argc, char *agv[])
     }
 
     // wait until FPGA is not BUSY anymore and is DONE
-    uint32_t fpga_ctrl = (uint32_t)*bpfcap_fpga_regs;
-    if (fpga_ctrl & (0x1 << 31))
-    {
-        fatal("FPGA still busy! Exiting");
-        goto fail_pcap;
-    }
+    //uint32_t fpga_ctrl = (uint32_t)*bpfcap_fpga_regs;
+    //if (fpga_ctrl & (0x1 << 31))
+    //{
+    //    fatal("FPGA still busy! Exiting");
+    //    goto fail_pcap;
+    //}
 
     // get last write address and last len - this will be the end we need to dump
     uint32_t out_buffer_pos = *(bpfcap_fpga_regs + 0xC);
     uint32_t last_tx_len = *(bpfcap_fpga_regs + 0x8) - *(bpfcap_fpga_regs + 0x4);
     out_buffer_pos += last_tx_len;
 
-    if (out_buffer_pos < MEM_BUFFER_PHY_ADDR || out_buffer_pos >=  0x3fffffff)
-    {
-        fatal("The output buffer either wrapped or is wrong, out_buffer_pos: ", out_buffer_pos);
-        goto fail;
-    }
+    //if (out_buffer_pos < MEM_BUFFER_PHY_ADDR || out_buffer_pos >=  0x3fffffff)
+    //{
+    //    fatal("The output buffer either wrapped or is wrong, out_buffer_pos: 0x%08x", out_buffer_pos);
+    //    goto fail;
+    //}
 
-    uint32_t filesize = out_buffer_pos - MEM_BUFFER_PHY_ADDR;
+    //uint32_t filesize = out_buffer_pos - MEM_BUFFER_PHY_ADDR;
+    uint32_t filesize = 0x10000;
     char* pcap_buf = mmap(NULL, filesize + PCAP_HEADER_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, pcap_fd, 0);
     if (pcap_buf == MAP_FAILED)
     {
         fatal("Canot map the dump buffer for writing", errno);
         goto fail_pcap;
     }
+    ftruncate(pcap_fd, filesize + PCAP_HEADER_SIZE);
     write_pcap_header(pcap_buf);
 
     memcpy(pcap_buf, packet_dump_mem, filesize);
-/*
-    // randomize the memory in the buffer? so we can check continously
-    memset(packet_dump_mem, 0xFF, MEM_BUFFER_LEN);
-    // print_all_memory
-    //printf("\n\nPRINTING ALL MEMORY \n\n");
-    //print_memory(packet_dump_mem, MEM_BUFFER_PHY_ADDR, MEM_BUFFER_PHY_ADDR + MEM_BUFFER_LEN / 8);
-
-    // clear registers of FPGA
-    set_fpga_regs(bpfcap_fpga_regs, 0x0, 0x0, 0x0, 0x0);
-
-    // read the register contents just to be sure
-    print_fpga_regs(bpfcap_fpga_regs);
-
-    // read from the 0th mem buffer
-    printf("\n\nMEMORY BEFORE PKT WRITING addr: %x end: %x\n\n", MEM_BUFFER_PHY_ADDR,
-            MEM_BUFFER_PHY_ADDR + TEMP_BUFFER_SIZE);
-    print_memory(packet_dump_mem, MEM_BUFFER_PHY_ADDR,
-            MEM_BUFFER_PHY_ADDR + TEMP_BUFFER_SIZE);
-    // write first time to clear registers
-    for (int i = 0; i < 0x1111 / 32; ++i) // TODO: add printing, probably wrong addressing here
-    {
-        *(packet_dump_mem + MEM_BUFFER_PKT_SRC_OFF + i) = i % 0xCC;
-    }
-
-    //printf("\n\nPRINTING ALL MEMORY AFTER PKT WRITING\n\n");
-    //print_memory(packet_dump_mem, MEM_BUFFER_PHY_ADDR, MEM_BUFFER_PHY_ADDR + MEM_BUFFER_LEN / 8);
-
-    printf("\n\nMEMORY AFTER PKT WRITING addr: %x end: %x\n\n", MEM_BUFFER_PHY_ADDR,
-            MEM_BUFFER_PHY_ADDR + TEMP_BUFFER_SIZE);
-    print_memory(packet_dump_mem, MEM_BUFFER_PHY_ADDR,
-            MEM_BUFFER_PHY_ADDR + TEMP_BUFFER_SIZE);
-    printf("\n\nMEMORY AFTER PKT WRITING FOR NEXT RANGE addr: %x end: %x\n\n", MEM_BUFFER_PHY_ADDR + MEM_BUFFER_PKT_DST_OFF(1),
-            MEM_BUFFER_PHY_ADDR + MEM_BUFFER_PKT_DST_OFF(1) + TEMP_BUFFER_SIZE);
-    print_memory(packet_dump_mem, MEM_BUFFER_PHY_ADDR + MEM_BUFFER_PKT_DST_OFF(1),
-            MEM_BUFFER_PHY_ADDR + MEM_BUFFER_PKT_DST_OFF(1) + TEMP_BUFFER_SIZE);
-    printf("\n\nMEMORY AFTER PKT WRITING FOR NEXT RANGE addr: %x end: %x\n\n", MEM_BUFFER_PHY_ADDR + MEM_BUFFER_PKT_DST_OFF(2),
-            MEM_BUFFER_PHY_ADDR + MEM_BUFFER_PKT_DST_OFF(2) + TEMP_BUFFER_SIZE);
-    print_memory(packet_dump_mem, MEM_BUFFER_PHY_ADDR + MEM_BUFFER_PKT_DST_OFF(2),
-            MEM_BUFFER_PHY_ADDR + MEM_BUFFER_PKT_DST_OFF(2) + TEMP_BUFFER_SIZE);
-
-    */
 
     munmap(bpfcap_fpga_regs, BPFCAP_FPGA_REG_SIZE);
     munmap(packet_dump_mem, MEM_BUFFER_LEN);
