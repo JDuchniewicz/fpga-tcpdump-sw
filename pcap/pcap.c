@@ -22,7 +22,9 @@
 
 static volatile sig_atomic_t stop = 0;
 
-static char* magic_nr = "0xA1B23C4D";
+static char *magic_nr = "0xA1B23C4D";
+char *NAME = "dump.pcap";
+int SIZE = MEM_BUFFER_LEN;
 
 static void fatal(const char* msg, ...)
 {
@@ -84,37 +86,65 @@ void write_pcap_header(char* pcap_buf)
     printf("contents 0x%08x\n", *pcap_buf);
     //pcap_buf += 4;
     // major
+    pcap_buf += 1;
     *pcap_buf = 2;
     printf("contents 0x%08x\n", *pcap_buf);
     pcap_buf += 2;
     // minor
     *pcap_buf = 4;
     printf("contents 0x%08x\n", *pcap_buf);
-    pcap_buf += 2;
+    pcap_buf += 1;
     // reserved x2
     memset(pcap_buf, 0, 8);
     printf("contents 0x%08x\n", *pcap_buf);
     pcap_buf += 8;
     // snaplen - 1500 currently used MTU?
-    *pcap_buf = 0x05;
+    // TODO: fix snaplen
+    //*pcap_buf = 0x05;
+    *pcap_buf = 0xff;
     printf("contents 0x%08x\n", *pcap_buf);
     pcap_buf += 1;
-    *pcap_buf = 0xdc;
+    //*pcap_buf = 0xdc;
+    *pcap_buf = 0xff; // TODO: fix it, somehow wrong also endianness of time etc is wrong, need to switched in the RTL
     printf("contents 0x%08x\n", *pcap_buf);
     pcap_buf += 3;
     // FCS + reserved
     pcap_buf += 2;
     // link type LINKTYPE_IPV4?
+    pcap_buf += 1;
     *pcap_buf = 0xe4;
-    pcap_buf += 2;
+    pcap_buf += 1;
 }
 
-//void print_help()
-//{
-//    print
-//}
+void parse_args(int argc, char** argv)
+{
+    int opt;
 
-int main(int argc, char *agv[])
+    while ((opt = getopt(argc, argv, "s:n:")) != -1)
+    {
+        switch (opt)
+        {
+            case 's':
+                SIZE = strtol(optarg, NULL, 16);
+                if (SIZE > MEM_BUFFER_LEN)
+                {
+                    printf("Size cannot be greater than %d\n", MEM_BUFFER_LEN);
+                    SIZE = MEM_BUFFER_LEN;
+                }
+                break;
+
+            case 'n':
+                NAME = optarg;
+                break;
+
+            default:
+                printf("Usage: %s [-s] [size] [-n] [pcap file name]", argv[0]);
+                exit(EXIT_FAILURE);
+        }
+    }
+}
+
+int main(int argc, char** argv)
 {
     int mem_fd = open(MEM_FILE, O_RDWR | O_SYNC);
     if (mem_fd < 0)
@@ -141,14 +171,14 @@ int main(int argc, char *agv[])
     signal(SIGSTOP, sighandler);
 
     // this program needs:
-    // input management (filename, buffer capture size, constant wraparound buffer run?)
+    // input management (filename, buffer capture size, constant wraparound buffer run?) (this freerun buffer might be not possible)
     // open and dump the memory contents (byte by byte or memcpy?)
-    // add pcap header to the dump
     // debug printing?
-    // checking if fpga is still working?
+
+    parse_args(argc, argv);
 
     // for now just read whole memory to the buffer
-    int pcap_fd = open("dump.pcap", O_RDWR | O_CREAT, PROT_WRITE | PROT_READ);
+    int pcap_fd = open(NAME, O_RDWR | O_CREAT, PROT_WRITE | PROT_READ);
     if (pcap_fd < 0)
     {
         fatal("Cannot open the dump file", errno);
@@ -156,18 +186,19 @@ int main(int argc, char *agv[])
     }
 
     // wait until FPGA is not BUSY anymore and is DONE
-    //uint32_t fpga_ctrl = (uint32_t)*bpfcap_fpga_regs;
-    //if (fpga_ctrl & (0x1 << 31))
-    //{
-    //    fatal("FPGA still busy! Exiting");
-    //    goto fail_pcap;
-    //}
+    uint32_t fpga_ctrl = (uint32_t)*bpfcap_fpga_regs;
+    if (fpga_ctrl & (0x1 << 31))
+    {
+        fatal("FPGA still busy! Exiting");
+        goto fail_pcap;
+    }
 
     // get last write address and last len - this will be the end we need to dump
     uint32_t out_buffer_pos = *(bpfcap_fpga_regs + 0xC);
     uint32_t last_tx_len = *(bpfcap_fpga_regs + 0x8) - *(bpfcap_fpga_regs + 0x4);
     out_buffer_pos += last_tx_len;
 
+    // TODO: debug, seems to not work properly
     //if (out_buffer_pos < MEM_BUFFER_PHY_ADDR || out_buffer_pos >=  0x3fffffff)
     //{
     //    fatal("The output buffer either wrapped or is wrong, out_buffer_pos: 0x%08x", out_buffer_pos);
@@ -176,29 +207,29 @@ int main(int argc, char *agv[])
 
     //uint32_t filesize = out_buffer_pos - MEM_BUFFER_PHY_ADDR;
     uint32_t filesize = 0x10000;
-    char* pcap_buf = mmap(NULL, filesize + PCAP_HEADER_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, pcap_fd, 0);
+    char* pcap_buf = mmap(NULL, SIZE + PCAP_HEADER_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, pcap_fd, 0);
     if (pcap_buf == MAP_FAILED)
     {
         fatal("Canot map the dump buffer for writing", errno);
         goto fail_pcap;
     }
-    ftruncate(pcap_fd, filesize + PCAP_HEADER_SIZE);
+    ftruncate(pcap_fd, SIZE + PCAP_HEADER_SIZE);
     printf("pcap_buf: 0x%08x\n", (uint32_t)pcap_buf);
     write_pcap_header(pcap_buf);
     pcap_buf += 24;
     printf("pcap_buf: 0x%08x\n", (uint32_t)pcap_buf);
 
-    memcpy(pcap_buf, packet_dump_mem, filesize);
+    memcpy(pcap_buf, packet_dump_mem, SIZE);
 
     munmap(bpfcap_fpga_regs, BPFCAP_FPGA_REG_SIZE);
     munmap(packet_dump_mem, MEM_BUFFER_LEN);
-    munmap(pcap_buf, filesize + PCAP_HEADER_SIZE);
+    munmap(pcap_buf, SIZE + PCAP_HEADER_SIZE);
     close(mem_fd);
     close(pcap_fd);
     return 0;
 
 fail_pcap:
-    munmap(pcap_buf, filesize + PCAP_HEADER_SIZE);
+    munmap(pcap_buf, SIZE + PCAP_HEADER_SIZE);
     close(pcap_fd);
 fail_unmap:
     munmap(bpfcap_fpga_regs, BPFCAP_FPGA_REG_SIZE);
