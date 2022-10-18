@@ -116,7 +116,7 @@ int main(int argc, char *agv[])
             MEM_BUFFER_PHY_ADDR + TEMP_BUFFER_SIZE);
     print_memory(packet_dump_mem, MEM_BUFFER_PHY_ADDR,
             MEM_BUFFER_PHY_ADDR + TEMP_BUFFER_SIZE);
-/*
+
     // randomize the memory in the buffer? so we can check continously
     memset(packet_dump_mem, 0xFF, MEM_BUFFER_LEN);
     // print_all_memory
@@ -175,7 +175,7 @@ int main(int argc, char *agv[])
                 MEM_BUFFER_PHY_ADDR + TEMP_BUFFER_SIZE,
                 MEM_BUFFER_PHY_ADDR + MEM_BUFFER_PKT_DST_OFF(i));
 
-        sleep(1); // necessary because otherwise FPGA modifies the memory too soon?
+        //sleep(1); // necessary because otherwise FPGA modifies the memory too soon?
 
         print_fpga_regs(bpfcap_fpga_regs);
 
@@ -183,7 +183,6 @@ int main(int argc, char *agv[])
         print_memory(packet_dump_mem, MEM_BUFFER_PHY_ADDR + MEM_BUFFER_PKT_DST_OFF(i),
                 MEM_BUFFER_PHY_ADDR + MEM_BUFFER_PKT_DST_OFF(i) + TEMP_BUFFER_SIZE);
     }
-    */
 
     // print the mapped memory contents
     printf("\n\nDONE PROCESSING\n\n");

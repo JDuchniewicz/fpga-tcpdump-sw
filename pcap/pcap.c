@@ -14,7 +14,7 @@
 #define MEM_BUFFER_LEN              0xffff
 #define MEM_BUFFER_PKT_SRC_OFF      0x0
 
-#define BPFCAP_FPGA_REG_SIZE        0x10 // TODO: how can we get it from the driver?
+#define BPFCAP_FPGA_REG_SIZE        0x1C // TODO: how can we get it from the driver?
 #define BPFCAP_DEV_FILE             "/dev/bpfcap_fpga"
 #define MEM_FILE                    "/dev/mem"
 
@@ -40,20 +40,44 @@ static void sighandler(int sig)
     stop = 1;
 }
 
-void set_fpga_regs(uint32_t* fpga_regs, uint32_t ctrl, uint32_t pkt_start, uint32_t pkt_end, uint32_t write_addr)
+void set_fpga_regs(uint32_t* fpga_regs, uint32_t ctrl, uint32_t pkt_start, uint32_t pkt_end,
+                   uint32_t capt_buf_start, uint32_t capt_buf_size)
 {
     // pointer is 4 bytes
     *fpga_regs = ctrl;
     *(fpga_regs + 0x1) = pkt_start;
     *(fpga_regs + 0x2) = pkt_end;
-    *(fpga_regs + 0x3) = write_addr;
+    *(fpga_regs + 0x3) = capt_buf_start;
+    *(fpga_regs + 0x4) = capt_buf_size;
+}
+
+uint32_t get_fpga_reg(uint32_t fpga_regs, uint32_t reg_nr)
+{
+    if (reg_nr == 0)
+        return fpga_regs;
+    else if (reg_nr == 1)
+        return (fpga_regs + 0x1);
+    else if (reg_nr == 2)
+        return (fpga_regs + 0x2);
+    else if (reg_nr == 3)
+        return (fpga_regs + 0x3);
+    else if (reg_nr == 4)
+        return (fpga_regs + 0x4);
+    else if (reg_nr == 5)
+        return (fpga_regs + 0x5);
+    else
+    {
+        printf("Invalid register number %d, allowed values 0 - 5\n", reg_nr);
+        return 0;
+    }
 }
 
 void print_fpga_regs(uint32_t* fpga_regs)
 {
     printf("\n\nPRINTING FPGA REGS:\n");
-    printf("ctrl: %x, pkt_start: %x, pkt_end: %x, write_addr: %x",
-            *fpga_regs, *(fpga_regs + 0x1), *(fpga_regs + 0x2), *(fpga_regs + 0x3));
+    printf("ctrl: %x, pkt_start: %x, pkt_end: %x, capt_buf_start: %x, capt_buf_size: %x, last_write_addr: %x",
+            *fpga_regs, *(fpga_regs + 0x1), *(fpga_regs + 0x2), *(fpga_regs + 0x3),
+            *(fpga_regs + 0x4), *(fpga_regs + 0x5));
 }
 
 void print_memory(char* mem, uint32_t start_addr, uint32_t end_addr)
@@ -75,25 +99,24 @@ void write_pcap_header(char* pcap_buf)
 {
     // magic
     // memcpy(pcap_buf, magic_nr, 4); TODO: somehow this does not work
-    *pcap_buf = 0xA1;
-    pcap_buf += 1;
-    *pcap_buf = 0xB2;
+    *pcap_buf = 0x4D;
     pcap_buf += 1;
     *pcap_buf = 0x3C;
     pcap_buf += 1;
-    *pcap_buf = 0x4D;
+    *pcap_buf = 0xB2;
+    pcap_buf += 1;
+    *pcap_buf = 0xA1;
     pcap_buf += 1;
     printf("contents 0x%08x\n", *pcap_buf);
     //pcap_buf += 4;
     // major
-    pcap_buf += 1;
     *pcap_buf = 2;
     printf("contents 0x%08x\n", *pcap_buf);
     pcap_buf += 2;
     // minor
     *pcap_buf = 4;
     printf("contents 0x%08x\n", *pcap_buf);
-    pcap_buf += 1;
+    pcap_buf += 2;
     // reserved x2
     memset(pcap_buf, 0, 8);
     printf("contents 0x%08x\n", *pcap_buf);
@@ -109,11 +132,8 @@ void write_pcap_header(char* pcap_buf)
     printf("contents 0x%08x\n", *pcap_buf);
     pcap_buf += 3;
     // FCS + reserved
-    pcap_buf += 2;
     // link type LINKTYPE_IPV4?
-    pcap_buf += 1;
     *pcap_buf = 0xe4;
-    pcap_buf += 1;
 }
 
 void parse_args(int argc, char** argv)
@@ -172,8 +192,6 @@ int main(int argc, char** argv)
 
     // this program needs:
     // input management (filename, buffer capture size, constant wraparound buffer run?) (this freerun buffer might be not possible)
-    // open and dump the memory contents (byte by byte or memcpy?)
-    // debug printing?
 
     parse_args(argc, argv);
 
