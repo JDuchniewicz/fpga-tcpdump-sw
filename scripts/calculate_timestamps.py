@@ -8,7 +8,7 @@ def main():
     parser.add_argument('-o', help="output csv file name", required=True)
     args = parser.parse_args()
 
-    COMPENSATION = 240e-9 * 2
+    COMPENSATION = 240e-9 * 3
 
     file = open(args.f)
     csvfile = open(args.o, 'w')
@@ -23,7 +23,7 @@ def main():
         if not line:
             break
 
-        if ("Before XDP" in line):
+        if ("Before FPGA" in line):
             next_line = file.readline()
 
             t1 = line.split()[3][:-1]
@@ -38,9 +38,15 @@ def main():
             total += 1
 
     mean = sum(diffs) / total
+    min_t = min(diffs)
+    max_t = max(diffs)
+    median = statistics.median(diffs)
     std_dev = statistics.stdev(diffs)
     print(f"Mean: {mean}")
     print(f"Std dev: {std_dev}")
+    print(f"Median: {median}")
+    print(f"Min: {min_t}")
+    print(f"Max: {max_t}")
 
     csvwriter.writerows(zip(*[diffs]))
 
