@@ -8,7 +8,7 @@ def main():
     parser.add_argument('-o', help="output csv file name", required=True)
     args = parser.parse_args()
 
-    COMPENSATION = 240e-9 * 3
+    COMPENSATION = 240e-9 * 3 # TODO: check if proper
 
     file = open(args.f)
     csvfile = open(args.o, 'w')
@@ -26,8 +26,8 @@ def main():
         if ("Before FPGA" in line):
             next_line = file.readline()
 
-            t1 = line.split()[3][:-1]
-            t2 = next_line.split()[3][:-1]
+            t1 = line.split()[-1]
+            t2 = next_line.split()[-1]
             diff = float(t2) - float(t1)
 
             # compensate for bus accesses
