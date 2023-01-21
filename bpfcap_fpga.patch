@@ -1,0 +1,275 @@
+diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
+index 3d67d1fa3690..d8da1d7d736b 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
+@@ -49,6 +49,7 @@
+ #include "dwmac1000.h"
+ #include "dwxgmac2.h"
+ #include "hwif.h"
++#include <linux/printk.h>
+ 
+ #define	STMMAC_ALIGN(x)		ALIGN(ALIGN(x, SMP_CACHE_BYTES), 16)
+ #define	TSO_MAX_BUFF_SIZE	(SZ_16K - 1)
+@@ -132,6 +133,13 @@ static void stmmac_init_fs(struct net_device *dev);
+ static void stmmac_exit_fs(struct net_device *dev);
+ #endif
+ 
++#define BPFCAP_PHYS_ADDR 0xc0010000
++#define BPFCAP_BUF_START 0x3fff0000
++#define BPFCAP_BUF_SIZE  0x10000
++#define BPFCAP_REG_SIZE  0x1C
++static void __iomem *bpfcap_fpga_dev;
++//static void *bpfcap_dest_addr;
++
+ #define STMMAC_COAL_TIMER(x) (ns_to_ktime((x) * NSEC_PER_USEC))
+ 
+ int stmmac_bus_clks_config(struct stmmac_priv *priv, bool enabled)
+@@ -3641,7 +3649,8 @@ int stmmac_open(struct net_device *dev)
+ 	int mode = priv->plat->phy_interface;
+ 	int bfsize = 0;
+ 	u32 chan;
+-	int ret;
++	int ret, i;
++    u64 t1, t2;
+ 
+ 	ret = pm_runtime_get_sync(priv->device);
+ 	if (ret < 0) {
+@@ -3649,7 +3658,40 @@ int stmmac_open(struct net_device *dev)
+ 		return ret;
+ 	}
+ 
+-	if (priv->hw->pcs != STMMAC_PCS_TBI &&
++    // reserve FPGA iomem
++    struct resource *region = request_mem_region(BPFCAP_PHYS_ADDR, BPFCAP_REG_SIZE, "bpfcap_fpga_priv");
++    if (!region)
++    {
++        printk("Failed to allocate memory region");
++        goto init_phy_error;
++    }
++    bpfcap_fpga_dev = ioremap(BPFCAP_PHYS_ADDR, BPFCAP_REG_SIZE);
++
++    // probe the mean read and write time:
++    t1 = ktime_get_ns();
++    for (i = 0; i < 100; ++i)
++    {
++        readl(bpfcap_fpga_dev);
++    }
++    t2 = ktime_get_ns();
++    trace_printk("TIme of 100 FPGA acceses %llu\n", t2 - t1);
++    //trace_printk("BEFORE 100 FPGA writes%llu\n", ktime_get_ns());
++    //for (i = 0; i < 100; ++i)
++    //{
++    //    writel(i, bpfcap_fpga_dev);
++    //}
++    //trace_printk("AFTER 100 FPGA writes%llu\n", ktime_get_ns());
++
++    // set the buffer
++    printk("Writing 0x%08x to addr %p", BPFCAP_BUF_START, bpfcap_fpga_dev + 0xC);
++    writel(BPFCAP_BUF_START, bpfcap_fpga_dev + 0xC);
++    printk("Writing 0x%08x to addr %p", BPFCAP_BUF_SIZE, bpfcap_fpga_dev + 0x10);
++    writel(BPFCAP_BUF_SIZE, bpfcap_fpga_dev + 0x10);
++
++    //bpfcap_dest_addr = BPFCAP_DEST_ADDR;
++
++
++    if (priv->hw->pcs != STMMAC_PCS_TBI &&
+ 	    priv->hw->pcs != STMMAC_PCS_RTBI &&
+ 	    (!priv->hw->xpcs ||
+ 	     xpcs_get_an_mode(priv->hw->xpcs, mode) != DW_AN_C73)) {
+@@ -3801,6 +3843,9 @@ int stmmac_release(struct net_device *dev)
+ 	if (priv->dma_cap.fpesel)
+ 		stmmac_fpe_stop_wq(priv);
+ 
++    iounmap(bpfcap_fpga_dev);
++    release_mem_region(BPFCAP_PHYS_ADDR, BPFCAP_REG_SIZE);
++
+ 	return 0;
+ }
+ 
+@@ -4665,9 +4710,29 @@ static int __stmmac_xdp_run_prog(struct stmmac_priv *priv,
+ 				 struct xdp_buff *xdp)
+ {
+ 	u32 act;
++    u64 t1, t2;
+ 	int res;
+ 
++    printk("Entered __stmmac_xdp_run_prog");
++    printk("Packet start addr 0x%08x end addr 0x%08x", xdp->data, xdp->data_end);
++    printk("Data length %d", xdp->data_end - xdp->data);
++
++    int i;
++    struct page *page = virt_to_page(xdp->data);
++    void* phys_start = page_to_phys(page) + ((int)xdp->data & 0x00000fff);
++    //printk("Phys start 0x%08x", phys_start);
++    //printk("Printing packet's content");
++    //for (i = 0; i < xdp->data_end - xdp->data; ++i)
++    //{
++    //    printk("addr: 0x%08x %x ", ((char*)phys_start+i), *(char*)(xdp->data + i));
++    //    //if (i % 16 == 0 && i != 0)
++    //    //    printk("\n");
++    //}
++    //trace_printk("Before XDP %llu\n", ktime_get_ns());
++    t1 = ktime_get_ns();
+ 	act = bpf_prog_run_xdp(prog, xdp);
++    t2 = ktime_get_ns();
++    trace_printk("XDP processing time %llu\n", t2 - t1);
+ 	switch (act) {
+ 	case XDP_PASS:
+ 		res = STMMAC_XDP_PASS;
+@@ -4681,6 +4746,82 @@ static int __stmmac_xdp_run_prog(struct stmmac_priv *priv,
+ 		else
+ 			res = STMMAC_XDP_REDIRECT;
+ 		break;
++    /* XDP_FPGA_CAPTURE */
++    case 5:
++        {
++            u64 pkt_len = xdp->data_end - xdp->data;
++            if (pkt_len == 60 || pkt_len == 342)
++            {
++                res = STMMAC_XDP_PASS;
++                printk("Packet size 60 or 342, let it go");
++                break;
++            }
++            //trace_printk("Before FPGA %llu\n", ktime_get_ns());
++            t1 = ktime_get_ns();
++            u32 reg = readl(bpfcap_fpga_dev);
++            //trace_printk("After readl %llu\n", ktime_get_ns());
++            //u32 last_write_addr = readl(bpfcap_fpga_dev + 0x14);
++            //printk("FPGA ctrl reg is: %x last_write_addr: %x", reg, last_write_addr);
++
++            i = 0;
++            while (reg & (0x1 << 31) && i < 100)
++            {
++                ++i;
++                //printk("Waiting on FPGA i %d", i);
++            }
++
++            if (i == 100)
++            {
++                printk("TIMEOUT! FPGA still BUSY after 100 iterations");
++            }
++            else if (!(reg & (0x1 << 31)) && reg & (0x1u << 30))
++            {
++              //if (bpfcap_dest_addr + (xdp->data_end - xdp->data) > 0x3fffffff)
++              //{
++              //    //bpfcap_dest_addr = BPFCAP_DEST_ADDR;
++              //    printk("OVERFLOW in the dest buffer happened");
++              //}
++              //printk("Writing %x to addr %p", 0, bpfcap_fpga_dev);
++              //writel(0, bpfcap_fpga_dev);
++
++              //printk("Writing 0x%08x to addr %p", phys_start, bpfcap_fpga_dev + 0x4);
++              writel(phys_start, bpfcap_fpga_dev + 0x4);
++              //printk("Writing 0x%08x to addr %p", phys_start + (xdp->data_end - xdp->data), bpfcap_fpga_dev + 0x8);
++              writel(phys_start + (xdp->data_end - xdp->data), bpfcap_fpga_dev + 0x8);
++
++              //printk("Writing 0x%08x to addr %p", bpfcap_dest_addr, bpfcap_fpga_dev + 0xC);
++              //writel(bpfcap_dest_addr, bpfcap_fpga_dev + 0xC);
++
++              // TODO: add debug ifdefs to disable for measurements
++              //bpfcap_dest_addr += (xdp->data_end - xdp->data);
++              //last_write_addr = readl(bpfcap_fpga_dev + 0x14);
++              //printk("Dest dir after capture is 0x%08x", last_write_addr);
++              i = 0;
++              reg = readl(bpfcap_fpga_dev);
++              while (reg & (0x1 << 31) && i < 100) // while BUSY
++              {
++                  reg = readl(bpfcap_fpga_dev);
++                  ++i;
++                  //printk("STILL PROCESSING i=%d", i);
++              }
++              if (i == 100)
++                  printk("TOO LONG i over 100");
++
++              t2 = ktime_get_ns();
++              reg = readl(bpfcap_fpga_dev + 0x18);
++              trace_printk("Actual FPGA time 0x%08x\n", reg);
++              trace_printk("FPGA processing time %llu\n", t2 - t1);
++            }
++            else
++            {
++                printk("Failed to capture after waiting, BUSY && !DONE");
++            }
++
++            //printk("Returned XDP_FPGA_CAPTURE");
++            //res = STMMAC_XDP_CONSUMED;
++            res = STMMAC_XDP_PASS;
++        }
++        break;
+ 	default:
+ 		bpf_warn_invalid_xdp_action(act);
+ 		fallthrough;
+@@ -4692,6 +4833,7 @@ static int __stmmac_xdp_run_prog(struct stmmac_priv *priv,
+ 		break;
+ 	}
+ 
++    printk("Handled xdp bpf with return %d", act);
+ 	return res;
+ }
+ 
+@@ -5314,6 +5456,8 @@ static int stmmac_napi_poll_rx(struct napi_struct *napi, int budget)
+ 
+ 	priv->xstats.napi_poll++;
+ 
++    trace_printk("Poll Enter %llu\n", ktime_get_ns());
++
+ 	work_done = stmmac_rx(priv, budget, chan);
+ 	if (work_done < budget && napi_complete_done(napi, work_done)) {
+ 		unsigned long flags;
+@@ -5323,6 +5467,7 @@ static int stmmac_napi_poll_rx(struct napi_struct *napi, int budget)
+ 		spin_unlock_irqrestore(&ch->lock, flags);
+ 	}
+ 
++    trace_printk("Poll Exit %llu\n", ktime_get_ns());
+ 	return work_done;
+ }
+ 
+@@ -5632,6 +5777,7 @@ static irqreturn_t stmmac_interrupt(int irq, void *dev_id)
+ 	struct net_device *dev = (struct net_device *)dev_id;
+ 	struct stmmac_priv *priv = netdev_priv(dev);
+ 
++    trace_printk("Interrupt %llu\n", ktime_get_ns());
+ 	/* Check if adapter is up */
+ 	if (test_bit(STMMAC_DOWN, &priv->state))
+ 		return IRQ_HANDLED;
+@@ -6253,7 +6399,7 @@ static int stmmac_vlan_rx_kill_vid(struct net_device *ndev, __be16 proto, u16 vi
+ static int stmmac_bpf(struct net_device *dev, struct netdev_bpf *bpf)
+ {
+ 	struct stmmac_priv *priv = netdev_priv(dev);
+-
++    printk("Entered stmac_bpf");
+ 	switch (bpf->command) {
+ 	case XDP_SETUP_PROG:
+ 		return stmmac_xdp_set_prog(priv, bpf->prog, bpf->extack);
+diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac_xdp.c b/drivers/net/ethernet/stmicro/stmmac/stmmac_xdp.c
+index 2a616c6f7cd0..48d8c5ecfe86 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_xdp.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_xdp.c
+@@ -2,6 +2,7 @@
+ /* Copyright (c) 2021, Intel Corporation. */
+ 
+ #include <net/xdp_sock_drv.h>
++#include <linux/printk.h>
+ 
+ #include "stmmac.h"
+ #include "stmmac_xdp.h"
+@@ -107,6 +108,7 @@ int stmmac_xdp_set_prog(struct stmmac_priv *priv, struct bpf_prog *prog,
+ 	bool need_update;
+ 	bool if_running;
+ 
++    printk("Entered stmmac_xdp_set_prog");
+ 	if_running = netif_running(dev);
+ 
+ 	if (prog && dev->mtu > ETH_DATA_LEN) {
+diff --git a/net/ipv4/ip_input.c b/net/ipv4/ip_input.c
+index 3a025c011971..6ae313ed0648 100644
+--- a/net/ipv4/ip_input.c
++++ b/net/ipv4/ip_input.c
+@@ -221,6 +221,7 @@ void ip_protocol_deliver_rcu(struct net *net, struct sk_buff *skb, int protocol)
+ 			consume_skb(skb);
+ 		}
+ 	}
++    trace_printk("Packet delivered, time %llu", ktime_get_ns());
+ }
+ 
+ static int ip_local_deliver_finish(struct net *net, struct sock *sk, struct sk_buff *skb)
