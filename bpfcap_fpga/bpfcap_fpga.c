@@ -1,30 +1,5 @@
-#include <linux/module.h>
-#include <linux/platform_device.h>
-#include <linux/miscdevice.h>
-#include <linux/of.h>
-#include <linux/fs.h>
-#include <linux/io.h>
-#include <linux/mm.h>
-#include <linux/types.h>
-#include <linux/uaccess.h>
+#include "bpfcap_fpga.h"
 
-// TODO: need a define for the physical emory address we will have assigned
-//
-#define BPFCAP_FPGA_REG_START   0xc0010000 // FIXME:  is this proper address?
-#define BPFCAP_FPGA_CTRL        0x00 /* Read / Write */
-#define BPFCAP_FPGA_PKT_BEGIN   0x04 /* Write */
-#define BPFCAP_FPGA_PKT_END     0x08 /* Write */
-#define BPFCAP_FPGA_WRITE_ADDR  0x0C /* Write */
-/* end of physical memory range */
-#define BPFCAP_FPGA_REG_END     BPFCAP_FPGA_REG_START + BPFCAP_FPGA_WRITE_ADDR
-
-static int bpfcap_fpga_probe(struct platform_device *pdev);
-static int bpfcap_fpga_remove(struct platform_device *pdev);
-static ssize_t bpfcap_fpga_write(struct file *file, const char *buffer, size_t len, loff_t *offset);// TODO: not sure if I need them atm
-static ssize_t bpfcap_fpga_read(struct file *file, char *buffer, size_t len, loff_t *offset);
-static int bpfcap_fpga_mmap(struct file *file, struct vm_area_struct *vma);
-static int bpfcap_fpga_init(void);
-static void bpfcap_fpga_exit(void);
 
 struct bpfcap_fpga_dev {
     struct miscdevice miscdev;
@@ -75,6 +50,7 @@ static int bpfcap_fpga_probe(struct platform_device *pdev)
     }
 
     dev = devm_kzalloc(&pdev->dev, sizeof(struct bpfcap_fpga_dev), GFP_KERNEL);
+    bpfcap_fpga_device = dev;
 
     dev->regs = devm_ioremap_resource(&pdev->dev, r);
     if (IS_ERR(dev->regs))
@@ -116,6 +92,7 @@ static int bpfcap_fpga_remove(struct platform_device *pdev)
     pr_info("bpfcap_fpga_remove enter\n");
 
     // write stop to the capture program? TODO:
+    bpfcap_fpga_device = NULL;
 
     misc_deregister(&dev->miscdev);
     pr_info("bpfcap_fpga_remove exit\n");
@@ -185,6 +162,22 @@ static void bpfcap_fpga_exit(void)
 
     pr_info("FPGA accelerated tcpdump driver module successfully unregistered.\n");
 }
+
+int bpfcap_fpga_write_regs(u32 ctrl, u32 pkt_begin, u32 pkt_end, u32 write_addr)
+{
+    if (!bpfcap_fpga_device)
+    {
+        pr_err("Please call insmod bpfcap_fpga.ko first.\n");
+        return 1;
+    }
+
+    iowrite32(ctrl, bpfcap_fpga_device->regs + BPFCAP_FPGA_CTRL);
+    iowrite32(pkt_begin, bpfcap_fpga_device->regs + BPFCAP_FPGA_PKT_BEGIN);
+    iowrite32(pkt_end, bpfcap_fpga_device->regs + BPFCAP_FPGA_PKT_END);
+    iowrite32(write_addr, bpfcap_fpga_device->regs + BPFCAP_FPGA_WRITE_ADDR);
+    return 0;
+}
+EXPORT_SYMBOL(bpfcap_fpga_write_regs);
 
 module_init(bpfcap_fpga_init);
 module_exit(bpfcap_fpga_exit);
